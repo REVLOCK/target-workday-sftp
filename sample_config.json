@@ -1,0 +1,21 @@
+{
+    "journal_summary_input_path": "/path/from/revrec/JournalSummary.csv",
+    "sftp_host": "sftp.workday.com",
+    "sftp_port": 22,
+    "sftp_username": "workday_sftp_user",
+    "sftp_password": "",
+    "sftp_private_key_path": "",
+    "sftp_private_key_passphrase": "",
+    "sftp_remote_path": "/inbound/",
+    "transform_mode": "auto",
+    "journal_entry_memo": "Chargebee RevRec",
+    "journal_source": "Chargebee RevRec",
+    "company_reference_id": "CIRC",
+    "accounting_date_closing_day": 15,
+    "worktag_cost_center_id": "400",
+    "column_map": {},
+    "columns_order": [],
+    "output_delimiter": ",",
+    "transform_output_filename": "workday_journal_upload.csv",
+    "transform_output_dir": ""
+}

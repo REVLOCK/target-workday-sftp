@@ -1,5 +1,6 @@
-# Secrets and internal config files
-.secrets/*
+# Local-only (not published to this remote)
+.github/
+.secrets/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""setup.cfg drives build; egg_info forced to repo root (not under src/)."""
+"""setup.cfg drives build; egg_info forced to repo root."""
 from pathlib import Path
 
 from setuptools import setup

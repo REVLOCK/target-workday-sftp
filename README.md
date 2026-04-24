@@ -36,7 +36,7 @@ Batch-style target (same pattern as [target-intacct](https://github.com/hotgluex
    - `transform_output_filename` — output name (default `workday_journal_<stem>.csv`).
    - `transform_output_dir` — where to write the transformed file; if empty, a temp directory is used and removed after upload.
 
-   Required keys are listed in `src/target_workday_sftp/const.py` as `REQUIRED_CONFIG_KEYS`.
+   Required keys are listed in `target_workday_sftp/const.py` as `REQUIRED_CONFIG_KEYS`.
 
 3. **Run**
 
@@ -47,12 +47,12 @@ Batch-style target (same pattern as [target-intacct](https://github.com/hotgluex
 ## Layout
 
 - `setup.py` / `setup.cfg` — package metadata and entry point.
-- `src/target_workday_sftp/__init__.py` — Singer `main()`.
-- `src/target_workday_sftp/__main__.py` — `python -m target_workday_sftp`.
-- `src/target_workday_sftp/transform.py` — CSV transform (journal + passthrough).
-- `src/target_workday_sftp/sftp_upload.py` — config load, SFTP aliases, upload.
-- `src/target_workday_sftp/const.py` — keys, columns, timeouts.
-- `src/target_workday_sftp/exceptions.py` — errors.
+- `target_workday_sftp/__init__.py` — Singer `main()`.
+- `target_workday_sftp/__main__.py` — `python -m target_workday_sftp`.
+- `target_workday_sftp/transform.py` — CSV transform (journal + passthrough).
+- `target_workday_sftp/sftp_upload.py` — config load, SFTP aliases, upload.
+- `target_workday_sftp/const.py` — keys, columns, timeouts.
+- `target_workday_sftp/exceptions.py` — errors.
 - `sample_config.json` — sample config.
 
 ## Developer Resources

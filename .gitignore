@@ -1,6 +1,18 @@
-# Local-only (not published to this remote)
-.github/
+# Local secrets and credentials (never commit)
 .secrets/
+
+# Cursor / local tooling (not part of the package)
+.cursor/
+
+# Editor swap files
+*.swp
+*.swo
+*~
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -139,6 +151,9 @@ dmypy.json
 
 # PyCharm
 .idea/
+
+# Transformed upload staging (recreated each run; not versioned)
+output/
 
 # Singer / local run artifacts
 catalog.json

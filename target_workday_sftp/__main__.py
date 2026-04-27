@@ -1,4 +1,4 @@
-"""Run as: python -m target_workday_sftp."""
+"""python -m target_workday_sftp."""
 
 from target_workday_sftp import main
 

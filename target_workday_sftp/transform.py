@@ -1,476 +1,327 @@
-"""CSV transform: journal layout or passthrough."""
+"""Journal CSV to Workday journal CSV (same flow as Oracle ``transform_csv``)."""
 
 from __future__ import annotations
 
-import calendar
-import json
+import csv
 import logging
-import re
+import math
+import os
 import tempfile
-from dataclasses import dataclass
-from json import JSONDecodeError
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple, cast
-
-import pandas as pd
+from typing import Any, Dict, List, Mapping
 
 from target_workday_sftp.const import (
-    WORKDAY_DEFAULT_ADJUSTMENT_JOURNAL,
-    WORKDAY_DEFAULT_CURRENCY_RATE_TYPE,
-    WORKDAY_DEFAULT_EXCLUDE_FROM_SPEND,
-    WORKDAY_DEFAULT_LINE_CURRENCY_RATE,
-    WORKDAY_DEFAULT_SUBMIT,
+    INPUT_FILENAME,
+    REQUIRED_INPUT_COLUMNS,
+    TRANSFORM_OUTPUT_DEFAULT_DATE_STRFTIME,
+    TRANSFORM_OUTPUT_DIR_DEFAULT,
     WORKDAY_OUTPUT_COLUMNS,
 )
-from target_workday_sftp.exceptions import TransformError
+from target_workday_sftp.exceptions import InputError, TransformError, ValidationError
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class WorkdayJournalBuildConfig:
-    """Journal field defaults from config."""
+def _str_from_config(config: Mapping[str, Any], key: str) -> str:
+    """Stripped config value or empty (Oracle ``_str_from_config``)."""
+    v = config.get(key)
+    if v is None:
+        return ""
+    return str(v).strip()
 
-    journal_key: str
-    journal_entry_memo: str
-    journal_source: str
-    journal_line_memo_prefix: str
-    company_reference_id_type: str
-    company_reference_id: str
-    ledger_type: str
-    line_company_reference_id_type: str
-    ledger_account_parent_id_type: str
-    ledger_account_parent_id: str
-    ledger_account_reference_id_type: str
-    worktag_cost_center_id: str
-    worktag_cost_center_pattern: Optional[str]
-    accounting_date_closing_day: int
 
-    @classmethod
-    def from_target_config(cls, config: Mapping[str, Any]) -> WorkdayJournalBuildConfig:
-        """Build from flat target config."""
-        journal_memo = str(config.get("journal_entry_memo") or "Chargebee RevRec")
-        journal_source = str(config.get("journal_source") or journal_memo)
-        cc_pat = config.get("worktag_cost_center_pattern")
-        closing_raw = config.get("accounting_date_closing_day")
-        if closing_raw in (None, ""):
-            closing_day = 15
-        else:
-            try:
-                closing_day = int(closing_raw)
-            except (TypeError, ValueError) as exc:
-                raise TransformError(
-                    f"accounting_date_closing_day must be an integer, got {closing_raw!r}"
-                ) from exc
-        if not 1 <= closing_day <= 31:
-            raise TransformError(
-                f"accounting_date_closing_day must be 1-31, got {closing_day}"
+def _safe_str(value: Any, default: str = "") -> str:
+    """Strip to string; None/empty/NaN → default (Oracle ``_safe_str``)."""
+    if value is None or value == "":
+        return default
+    s = str(value).strip()
+    if s.lower() in ("nan", "none"):
+        return default
+    return s
+
+
+def _is_na_like(val: Any) -> bool:
+    """True for missing / blank / NaN-like cell values."""
+    if val is None:
+        return True
+    if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+        return True
+    s = str(val).strip()
+    if not s:
+        return True
+    if s.lower() in ("nan", "none", "null"):
+        return True
+    if s in (r"\N", "\\N"):
+        return True
+    return False
+
+
+def _validate_row(row: dict[str, Any], row_num: int, je_id: str) -> tuple[list[str], list[str]]:
+    """Return (errors, warnings) for one row (same checks as Oracle ``_validate_row``)."""
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    acct = row.get("Account Number")
+    if acct is None or (isinstance(acct, str) and not acct.strip()):
+        errors.append(
+            f"Row {row_num}: Account Number is required (Journal Entry: {je_id})"
+        )
+
+    posting_type = _safe_str(row.get("Posting Type", "")).upper()
+    if posting_type and posting_type not in ("DEBIT", "CREDIT"):
+        errors.append(
+            f"Row {row_num}: Posting Type must be Debit or Credit, got '{posting_type}' "
+            f"(Journal Entry: {je_id})"
+        )
+
+    amount = row.get("Amount")
+    try:
+        if amount not in (None, ""):
+            float(amount)
+    except (ValueError, TypeError):
+        errors.append(
+            f"Row {row_num}: Invalid Amount '{amount}' (Journal Entry: {je_id})"
+        )
+
+    tx_date = row.get("Transaction Date")
+    if tx_date and tx_date not in (None, ""):
+        try:
+            datetime.strptime(str(tx_date).strip(), "%Y-%m-%d")
+        except (ValueError, TypeError):
+            warnings.append(
+                f"Row {row_num}: Transaction Date '{tx_date}' may not parse correctly "
+                f"(expected YYYY-MM-DD)"
             )
 
-        return cls(
-            journal_key=str(config.get("journal_key") or "1"),
-            journal_entry_memo=journal_memo,
-            journal_source=journal_source,
-            journal_line_memo_prefix=str(
-                config.get("journal_line_memo_prefix") or journal_memo
-            ),
-            company_reference_id_type=str(
-                config.get("company_reference_id_type") or "Company_Reference_ID"
-            ),
-            company_reference_id=str(config.get("company_reference_id") or "CIRC"),
-            ledger_type=str(config.get("ledger_type") or "ACTUALS"),
-            line_company_reference_id_type=str(
-                config.get("line_company_reference_id_type") or "Company_Reference_ID"
-            ),
-            ledger_account_parent_id_type=str(
-                config.get("ledger_account_parent_id_type") or "Account_Set_ID"
-            ),
-            ledger_account_parent_id=str(
-                config.get("ledger_account_parent_id") or "Child"
-            ),
-            ledger_account_reference_id_type=str(
-                config.get("ledger_account_reference_id_type") or "Ledger_Account_ID"
-            ),
-            worktag_cost_center_id=str(config.get("worktag_cost_center_id") or "400"),
-            worktag_cost_center_pattern=(
-                str(cc_pat) if cc_pat not in (None, "") else None
-            ),
-            accounting_date_closing_day=closing_day,
-        )
-
-
-def _coerce_column_map(raw: Any) -> Dict[str, str]:
-    """column_map as dict or JSON object string."""
-    if raw is None:
-        return {}
-    if isinstance(raw, dict):
-        return {str(k): str(v) for k, v in raw.items()}
-    if isinstance(raw, str):
-        try:
-            parsed = json.loads(raw)
-        except JSONDecodeError as exc:
-            raise TransformError(f"column_map is not valid JSON: {exc}") from exc
-        if not isinstance(parsed, dict):
-            raise TransformError("column_map JSON must be an object")
-        return {str(k): str(v) for k, v in parsed.items()}
-    raise TransformError(f"column_map must be object or JSON string, got {type(raw)!r}")
-
-
-def _coerce_columns_order(raw: Any) -> Optional[List[str]]:
-    """columns_order as list or JSON array string."""
-    if raw is None:
-        return None
-    if isinstance(raw, list):
-        return [str(c) for c in raw]
-    if isinstance(raw, str):
-        try:
-            parsed = json.loads(raw)
-        except JSONDecodeError as exc:
-            raise TransformError(f"columns_order is not valid JSON: {exc}") from exc
-        if not isinstance(parsed, list):
-            raise TransformError("columns_order JSON must be a list of column names")
-        return [str(c) for c in parsed]
-    raise TransformError(f"columns_order must be list or JSON string, got {type(raw)!r}")
-
-
-def _norm_header(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", str(name).strip().lower()).strip("_")
-
-
-def _find_column(df: pd.DataFrame, *candidates: str) -> Optional[str]:
-    cand_keys = {_norm_header(c) for c in candidates}
-    for col in df.columns:
-        if _norm_header(col) in cand_keys:
-            return str(col)
-    return None
-
-
-def _require_column(df: pd.DataFrame, *candidates: str) -> str:
-    col = _find_column(df, *candidates)
-    if not col:
-        raise TransformError(
-            f"Missing required column matching one of {candidates!r}; "
-            f"have columns={list(df.columns)}"
-        )
-    return col
-
-
-def _actg_period_to_accounting_date(period: Any, closing_day: int) -> str:
-    """Accounting period string to YYYY-MM-DD."""
-    if period is None or (isinstance(period, float) and pd.isna(period)):
-        raise TransformError("Actg Period is empty")
-    p = str(period).strip()
-    if re.fullmatch(r"\d{6}", p):
-        year, month = int(p[:4]), int(p[4:6])
-    elif re.fullmatch(r"\d{4}-\d{2}", p):
-        year, month = int(p[:4]), int(p[5:7])
-    else:
-        raise TransformError(
-            f"Unsupported Actg Period format {period!r}; expected YYYYMM or YYYY-MM"
-        )
-    if not 1 <= month <= 12:
-        raise TransformError(f"Invalid month in Actg Period {period!r}")
-    if not 1 <= closing_day <= 31:
-        raise TransformError("accounting_date_closing_day must be between 1 and 31")
-    last_day = calendar.monthrange(year, month)[1]
-    day = min(closing_day, last_day)
-    return f"{year:04d}-{month:02d}-{day:02d}"
-
-
-def _format_amount(val: Any) -> str:
-    if val is None or (isinstance(val, float) and pd.isna(val)):
-        return ""
-    try:
-        n = float(str(val).replace(",", "").strip())
-    except (TypeError, ValueError) as exc:
-        raise TransformError(f"Invalid amount: {val!r}") from exc
-    if abs(n - round(n, 2)) < 1e-9:
-        n = round(n, 2)
-    if n == int(n):
-        return str(int(n))
-    return f"{n:.2f}".rstrip("0").rstrip(".")
+    return errors, warnings
 
 
 def _blank_str(val: Any) -> str:
-    if val is None or (isinstance(val, float) and pd.isna(val)):
+    if _is_na_like(val):
         return ""
     s = str(val).strip()
-    return "" if s.lower() == "nan" else s
+    if s.lower() == "nan" or s in (r"\N", "\\N"):
+        return ""
+    return s
 
 
-def _line_memo(
-    row: pd.Series,
-    cols: Dict[str, Optional[str]],
-    prefix: str,
-) -> str:
-    evt = _blank_str(row[cast(str, cols["accounting_event_type"])])
-    acct = _blank_str(row[cast(str, cols["account_name"])])
-    pid_col = cols.get("product_id")
-    pid = _blank_str(row[cast(str, pid_col)]) if pid_col else ""
-    product_label = pid or acct
-    return f"{prefix} - {evt} | {product_label}" if product_label else f"{prefix} - {evt}"
+def _line_memo(row: Mapping[str, Any], config: Mapping[str, Any]) -> str:
+    jememo = _str_from_config(config, "JournalEntryMemo")
+    ptype = _blank_str(row.get("Product Type", ""))
+    pcode = _blank_str(row.get("Product Code", ""))
+    return f"{jememo} {ptype} {pcode}"
 
 
-def _revenue_category(row: pd.Series, cols: Dict[str, Optional[str]]) -> str:
-    pcode = cols.get("product_code")
-    ptype_col = cols.get("product_type")
-    code = _blank_str(row[cast(str, pcode)]) if pcode else ""
-    ptype = _blank_str(row[cast(str, ptype_col)]) if ptype_col else ""
+def _revenue_category(row: Mapping[str, Any]) -> str:
+    code = _blank_str(row.get("Product Code", ""))
+    ptype = _blank_str(row.get("Product Type", ""))
     if code and ptype:
         return f"{code} - {ptype}"
     return code or ptype
 
 
-def _cost_center_cell(
-    line_company: str,
-    cost_center_id: str,
-    pattern: Optional[str],
-) -> str:
-    if pattern:
-        try:
-            return pattern.format(
-                line_company_reference_id=line_company or "",
-                cost_center_id=cost_center_id,
-            )
-        except KeyError as exc:
-            raise TransformError(
-                f"Invalid worktag_cost_center_pattern placeholder: {exc}"
-            ) from exc
-    if line_company and cost_center_id:
-        return f"{line_company}_{cost_center_id}"
-    return cost_center_id
-
-
-def _resolve_input_columns(df: pd.DataFrame) -> Dict[str, Optional[str]]:
-    """Map required/optional logical names to df column names."""
-    return {
-        "actg_period": _require_column(df, "Actg Period", "actg_period"),
-        "entry_type": _require_column(df, "Type", "entry_type", "Debit/Credit"),
-        "amount": _require_column(df, "Amount", "amount"),
-        "currency": _require_column(df, "Currency Code", "currency_code", "Currency"),
-        "ledger_account": _require_column(
-            df, "Account Number", "account_number", "LedgerAccount"
-        ),
-        "accounting_event_type": _require_column(
-            df, "Accounting Event Type", "accounting_event_type"
-        ),
-        "account_name": _require_column(df, "Account Name", "account_name"),
-        "product_id": _find_column(df, "Product Id", "Product ID", "product_id"),
-        "product_code": _find_column(df, "Product Code", "product_code", "CF Product Code"),
-        "product_type": _find_column(df, "Product Type", "product_type", "CF Product Type"),
-        "market_id": _find_column(
-            df,
-            "MarketID Finance",
-            "Market ID Finance",
-            "cf_MarketID_Finance",
-            "Market Id",
-            "market_id_finance",
-        ),
-    }
-
-
-def detect_revrec_journal_export(df: pd.DataFrame) -> bool:
-    """True if df has GL-style columns for auto journal mode."""
-    keys = {_norm_header(c) for c in df.columns}
-    return (
-        "actg_period" in keys
-        and "account_number" in keys
-        and "type" in keys
-        and "amount" in keys
-    )
-
-
-def resolve_transform_mode(df: pd.DataFrame, config: Mapping[str, Any]) -> str:
-    """Return workday_journal, passthrough, or infer when mode is auto."""
-    mode = config.get("transform_mode") or "auto"
-    if mode == "workday_journal":
-        return "workday_journal"
-    if mode == "passthrough":
-        return "passthrough"
-    if mode == "auto":
-        return "workday_journal" if detect_revrec_journal_export(df) else "passthrough"
-    raise TransformError(
-        f"transform_mode must be one of auto, workday_journal, passthrough; got {mode!r}"
-    )
-
-
 def _build_empty_workday_row() -> Dict[str, str]:
-    """One output row with every column set to empty (oracle-style base row)."""
+    """Empty output row template."""
     return dict.fromkeys(WORKDAY_OUTPUT_COLUMNS, "")
 
 
-def _transform_workday_row(
-    pos: int,
-    row: pd.Series,
-    cols: Dict[str, Optional[str]],
-    cfg: WorkdayJournalBuildConfig,
+# Output columns not set by the shared ``_str_from_config`` loop below.
+_TRANSFORM_ROW_SKIP_STR_FROM_CONFIG = frozenset(
+    {
+        "Currency",
+        "AccountingDate",
+        "JournalLineOrder",
+        "LineCompanyReferenceID",
+        "LedgerAccountReferenceID",
+        "LineMemo",
+        "DebitAmount",
+        "CreditAmount",
+        "LineCurrency",
+        "LedgerDebitAmount",
+        "LedgerCreditAmount",
+        "Worktag_Revenue_Category_ID",
+        "Worktag_Sales_Item_ID",
+    }
+)
+
+
+def transform_row(
+    row: Mapping[str, Any],
+    config: Mapping[str, Any],
     line_order: int,
 ) -> Dict[str, str]:
-    """Map one input row to journal output columns; missing optional fields stay ``\"\"``."""
+    """Map one input CSV row to Workday journal columns (Oracle ``transform_row`` analogue)."""
     out = _build_empty_workday_row()
-    closing_day = cfg.accounting_date_closing_day
 
-    try:
-        acct_date = _actg_period_to_accounting_date(
-            row[cast(str, cols["actg_period"])], closing_day
-        )
-    except TransformError as exc:
-        raise TransformError(f"Line {pos}: {exc}") from exc
-
-    type_col = cast(str, cols["entry_type"])
-    et_raw = str(row[type_col]).strip().casefold()
+    type_raw = row.get("Posting Type", "")
+    et_raw = str(type_raw).strip().casefold()
     if et_raw not in ("debit", "credit"):
-        raise TransformError(
-            f"Line {pos}: Type must be Debit or Credit, got {row[type_col]!r}"
-        )
+        raise TransformError(f"Type must be Debit or Credit, got {type_raw!r}")
 
+    # Amount strings (Oracle ``transform_row``: ``float(row.get("Amount") or 0)``, ``str(round(..., 2))``).
     try:
-        amt = _format_amount(row[cast(str, cols["amount"])])
-    except TransformError as exc:
-        raise TransformError(f"Line {pos}: {exc}") from exc
+        amount_val = float(row.get("Amount") or 0)
+    except (ValueError, TypeError):
+        amount_val = 0.0
+    amount_str = str(round(amount_val, 2))
+    debit = amount_str if et_raw == "debit" else ""
+    credit = amount_str if et_raw == "credit" else ""
 
-    debit = amt if et_raw == "debit" else ""
-    credit = amt if et_raw == "credit" else ""
+    line_company = _blank_str(row.get("MarketID Finance", ""))
+    ledger_id = _blank_str(row.get("Account Number", ""))
+    cur = _blank_str(row.get("Currency", ""))
+    rev = _revenue_category(row)
+    sales_item = _blank_str(row.get("Product Type", ""))
+    line_memo = _line_memo(row, config)
 
-    mcol = cols.get("market_id")
-    line_company = _blank_str(row[cast(str, mcol)]) if mcol else ""
-    ledger_id = _blank_str(row[cast(str, cols["ledger_account"])])
-    cur = _blank_str(row[cast(str, cols["currency"])])
+    # Every ``_str_from_config`` column in ``WORKDAY_OUTPUT_COLUMNS`` order (JournalKey … tail externals).
+    for col in WORKDAY_OUTPUT_COLUMNS:
+        if col in _TRANSFORM_ROW_SKIP_STR_FROM_CONFIG:
+            continue
+        out[col] = _str_from_config(config, col)
 
-    out["JournalKey"] = cfg.journal_key
-    out["JournalEntryMemo"] = cfg.journal_entry_memo
-    out["Submit"] = WORKDAY_DEFAULT_SUBMIT
-    out["CompanyReferenceIDType"] = cfg.company_reference_id_type
-    out["CompanyReferenceID"] = cfg.company_reference_id
     out["Currency"] = cur
-    out["LedgerType"] = cfg.ledger_type
-    out["AccountingDate"] = acct_date
-    out["JournalSource"] = cfg.journal_source
-    out["AdjustmentJournal"] = WORKDAY_DEFAULT_ADJUSTMENT_JOURNAL
-    out["CurrencyRateType"] = WORKDAY_DEFAULT_CURRENCY_RATE_TYPE
+    out["AccountingDate"] = _blank_str(row.get("Transaction Date", ""))
     out["JournalLineOrder"] = str(line_order)
-    out["LineCompanyReferenceIDType"] = cfg.line_company_reference_id_type
     out["LineCompanyReferenceID"] = line_company
-    out["LedgerAccountReferenceID_ParentIDType"] = cfg.ledger_account_parent_id_type
-    out["LedgerAccountReferenceID_ParentID"] = cfg.ledger_account_parent_id
-    out["LedgerAccountReferenceIDType"] = cfg.ledger_account_reference_id_type
     out["LedgerAccountReferenceID"] = ledger_id
-    out["LineMemo"] = _line_memo(row, cols, cfg.journal_line_memo_prefix)
+    out["LineMemo"] = line_memo
     out["DebitAmount"] = debit
     out["CreditAmount"] = credit
     out["LineCurrency"] = cur
-    out["LineCurrencyRate"] = WORKDAY_DEFAULT_LINE_CURRENCY_RATE
     out["LedgerDebitAmount"] = debit
     out["LedgerCreditAmount"] = credit
-    out["ExcludeFromSpendReport"] = WORKDAY_DEFAULT_EXCLUDE_FROM_SPEND
+    out["Worktag_Revenue_Category_ID"] = rev
+    out["Worktag_Sales_Item_ID"] = sales_item
 
-    rev = _revenue_category(row, cols)
-    if rev:
-        out["Worktag_Revenue_Category_ID"] = rev
+    return out
 
-    if cols.get("product_type"):
-        pt = _blank_str(row[cast(str, cols["product_type"])])
-        if pt:
-            out["Worktag_Sales_Item_ID"] = pt
 
-    cc = _cost_center_cell(
-        line_company,
-        cfg.worktag_cost_center_id,
-        cfg.worktag_cost_center_pattern,
+def _transform_output_csv_path(config: Mapping[str, Any]) -> Path:
+    """Destination path: ``{UTC_YYYYMMDD}.csv`` under configured or default output dir."""
+    name = (
+        datetime.now(timezone.utc).strftime(TRANSFORM_OUTPUT_DEFAULT_DATE_STRFTIME)
+        + ".csv"
     )
-    if cc:
-        out["Worktag_Cost_Center_Reference_ID"] = cc
-
-    return out
-
-
-def build_workday_journal_dataframe(
-    df: pd.DataFrame,
-    cfg: WorkdayJournalBuildConfig,
-) -> pd.DataFrame:
-    """Build journal-layout output dataframe."""
-    if df.empty:
-        raise TransformError("Journal summary contains no data rows.")
-
-    cols = _resolve_input_columns(df)
-
-    rows_out: List[Dict[str, str]] = []
-    for pos, (_, row) in enumerate(df.iterrows(), start=1):
-        line_order = len(rows_out) + 1
-        rows_out.append(_transform_workday_row(pos, row, cols, cfg, line_order))
-
-    out = pd.DataFrame(rows_out, columns=WORKDAY_OUTPUT_COLUMNS)
-    logger.info("Journal rows built: input_rows=%s output_rows=%s", len(df), len(out))
-    return out
-
-
-def transform_journal_summary(config: Dict[str, Any]) -> Tuple[Path, Optional[Path]]:
-    """Transform and write CSV; returns output path and temp dir if any."""
-    input_path = Path(config["journal_summary_input_path"]).expanduser().resolve()
-    if not input_path.is_file():
-        raise TransformError(f"Journal summary file not found: {input_path}")
-
-    logger.info("Reading journal summary path=%s", input_path)
-    try:
-        df = pd.read_csv(input_path)
-    except pd.errors.EmptyDataError as exc:
-        raise TransformError(
-            f"Journal summary file is empty or has no parsable CSV content: {input_path}"
-        ) from exc
-    except pd.errors.ParserError as exc:
-        raise TransformError(f"Failed to parse journal summary CSV: {exc}") from exc
-    except OSError as exc:
-        raise TransformError(f"Failed to read journal summary CSV: {exc}") from exc
-
-    logger.info("Loaded journal summary rows=%s columns=%s", len(df), len(df.columns))
-
-    column_map = _coerce_column_map(config.get("column_map"))
-    if column_map:
-        missing = set(column_map) - set(df.columns)
-        if missing:
-            raise TransformError(
-                f"column_map references unknown columns: {sorted(missing)}; "
-                f"available={list(df.columns)}"
-            )
-        df = df.rename(columns=column_map)
-
-    mode = resolve_transform_mode(df, config)
-    logger.info("Transform mode=%s", mode)
-
-    if mode == "workday_journal":
-        wd_cfg = WorkdayJournalBuildConfig.from_target_config(config)
-        df = build_workday_journal_dataframe(df, wd_cfg)
-    else:
-        columns_order = _coerce_columns_order(config.get("columns_order"))
-        if columns_order:
-            missing = [c for c in columns_order if c not in df.columns]
-            if missing:
-                raise TransformError(
-                    f"columns_order references unknown columns: {missing}; "
-                    f"available={list(df.columns)}"
-                )
-            df = df[columns_order]
-
-    sep = str(config.get("output_delimiter") or ",")
-    if len(sep) != 1:
-        raise TransformError("output_delimiter must be a single character")
-
-    out_name = config.get("transform_output_filename") or f"workday_journal_{input_path.stem}.csv"
     out_dir_raw = config.get("transform_output_dir")
-    temp_root: Optional[Path] = None
-    if out_dir_raw:
-        out_dir = Path(out_dir_raw).expanduser().resolve()
-        out_dir.mkdir(parents=True, exist_ok=True)
+    if out_dir_raw not in (None, ""):
+        out_dir = Path(str(out_dir_raw)).expanduser().resolve()
     else:
-        out_dir = Path(tempfile.mkdtemp(prefix="journal-transform-"))
-        temp_root = out_dir
+        out_dir = Path(TRANSFORM_OUTPUT_DIR_DEFAULT).resolve()
+    return out_dir / name
 
-    out_path = out_dir / out_name
-    logger.info("Writing transformed file path=%s sep=%r", out_path, sep)
+
+def transform_journal_summary(config: Dict[str, Any]) -> Path:
+    """Read ``input_path``/``JournalSummary.csv``, write Workday CSV (Oracle ``transform_csv`` pattern)."""
+    root = Path(config["input_path"]).expanduser().resolve()
+    input_file = root / INPUT_FILENAME
+
+    if not input_file.exists():
+        raise InputError(f"Input file not found: {input_file}")
+
+    logger.info("Reading journal summary path=%s", input_file)
+    with open(input_file, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+        if not rows:
+            raise InputError("Input CSV has no data rows")
+        cols = list(rows[0].keys())
+
+    missing = [c for c in REQUIRED_INPUT_COLUMNS if c not in cols]
+    if missing:
+        raise InputError(f"Input CSV missing required columns: {missing}")
+
+    logger.info("Loaded journal summary rows=%s columns=%s", len(rows), len(cols))
+
+    out_path = _transform_output_csv_path(config)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fd, tmp_name = tempfile.mkstemp(
+        suffix=".csv",
+        prefix=".workday_journal_",
+        dir=str(out_path.parent),
+    )
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    wrote_output = False
+    success_count = 0
+    collected_warnings: list[dict[str, Any]] = []
     try:
-        df.to_csv(out_path, index=False, sep=sep)
-    except OSError as exc:
-        raise TransformError(f"Failed to write transformed file: {exc}") from exc
+        with open(tmp_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=list(WORKDAY_OUTPUT_COLUMNS),
+                delimiter=",",
+                extrasaction="ignore",
+            )
+            writer.writeheader()
 
-    logger.info("Transform complete rows_written=%s", len(df))
-    return out_path, temp_root
+            for row_num, row in enumerate(rows, start=2):
+                je_id = _safe_str(row.get("Journal Entry Id", ""))
+                errors, warnings = _validate_row(dict(row), row_num, je_id)
+
+                for w in warnings:
+                    collected_warnings.append(
+                        {
+                            "row": row_num,
+                            "journal_entry_id": je_id,
+                            "message": w,
+                        }
+                    )
+                    logger.warning(w)
+
+                if errors:
+                    err_payload = [
+                        {
+                            "row": row_num,
+                            "journal_entry_id": je_id,
+                            "message": e,
+                        }
+                        for e in errors
+                    ]
+                    raise ValidationError(
+                        f"Validation failed at row {row_num}: {errors[0]}",
+                        response={
+                            "errors": err_payload,
+                            "warnings": collected_warnings,
+                        },
+                    )
+
+                line_order = row_num - 1
+                try:
+                    out_row = transform_row(row, config, line_order)
+                    writer.writerow(out_row)
+                    success_count += 1
+                except Exception as e:
+                    err_msg = f"Row {row_num}: Transform failed - {e}"
+                    logger.exception(err_msg)
+                    raise TransformError(err_msg, response=e) from e
+
+        try:
+            if out_path.exists():
+                out_path.unlink()
+        except OSError as exc:
+            logger.warning("Could not remove prior output file %s: %s", out_path, exc)
+        os.replace(str(tmp_path), str(out_path))
+        wrote_output = True
+
+        logger.info(
+            "Transform rows=%d ok=%d fail=%d warn=%d → %s",
+            len(rows),
+            success_count,
+            len(rows) - success_count,
+            len(collected_warnings),
+            out_path,
+        )
+        return out_path
+    finally:
+        if not wrote_output and tmp_path.exists():
+            try:
+                tmp_path.unlink()
+                logger.debug("Removed temp file: %s", tmp_path)
+            except OSError as exc:
+                logger.warning("Could not remove temp %s: %s", tmp_path, exc)
+
+
+__all__ = ["transform_journal_summary", "transform_row"]

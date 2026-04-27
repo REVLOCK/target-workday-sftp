@@ -1,6 +1,9 @@
 # Local secrets and credentials (never commit)
 .secrets/
 
+# Local journal sample (not versioned; use your own JournalSummary.csv)
+sample_input_file.csv
+
 # Cursor / local tooling (not part of the package)
 .cursor/
 

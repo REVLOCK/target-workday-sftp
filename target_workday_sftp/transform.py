@@ -213,7 +213,7 @@ def _transform_output_csv_path(config: Mapping[str, Any]) -> Path:
 
 
 def transform_journal_summary(config: Dict[str, Any]) -> Path:
-    """Read ``input_path``/``JournalSummary.csv``, write Workday CSV (Oracle ``transform_csv`` pattern)."""
+    """Read ``input_path``/``JournalEntries.csv``, write Workday CSV (Oracle ``transform_csv`` pattern)."""
     root = Path(config["input_path"]).expanduser().resolve()
     input_file = root / INPUT_FILENAME
 

@@ -2,9 +2,9 @@
 
 TRANSFORM_OUTPUT_DIR_DEFAULT = "output"
 TRANSFORM_OUTPUT_DEFAULT_DATE_STRFTIME = "%Y%m%d"
-INPUT_FILENAME = "JournalSummary.csv"
+INPUT_FILENAME = "JournalEntries.csv"
 
-# Exact ``JournalSummary.csv`` header names (same contract as default journal export).
+# Exact ``JournalEntries.csv`` header names (same contract as default journal export).
 REQUIRED_INPUT_COLUMNS = [
     "Transaction Date",
     "Journal Entry Id",

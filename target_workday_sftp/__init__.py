@@ -82,13 +82,12 @@ def normalize_target_config(config: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _cleanup_transform_output(out_path: Path) -> None:
-    """Delete local output CSV."""
+    """Delete local output CSV (no logging: stderr may already be closed by the parent)."""
     try:
         if out_path.is_file():
             out_path.unlink()
-            logger.debug("Removed local transformed file: %s", out_path)
-    except OSError as exc:
-        logger.warning("Could not remove transformed file %s: %s", out_path, exc)
+    except OSError:
+        pass
 
 
 def require_flattened_config(config: Dict[str, Any]) -> None:
@@ -119,12 +118,20 @@ def main() -> None:
     try:
         sftp_cfg = SftpConnectionConfig.from_target_config(config)
         upload_file(out_path, sftp_cfg)
-        logger.info("Finished successfully; remote received file: %s", out_path.name)
+        try:
+            logger.info(
+                "Finished successfully; remote received file: %s", out_path.name
+            )
+        except Exception:
+            # Piped parents may close stderr as soon as upload completes; still exit 0.
+            pass
     finally:
         _cleanup_transform_output(out_path)
 
-    # Avoid exit 141 after success: ``sys.exit`` still runs logging/atexit teardown,
-    # which can write to a pipe the parent already closed. ``os._exit`` stops immediately.
+    # Piped runners often close the read side as soon as they see the last log line; any
+    # further stderr write (logging shutdown, cleanup logs) can SIGPIPE the process (141).
+    if hasattr(signal, "SIGPIPE"):
+        signal.signal(signal.SIGPIPE, signal.SIG_IGN)
     os._exit(0)
 
 

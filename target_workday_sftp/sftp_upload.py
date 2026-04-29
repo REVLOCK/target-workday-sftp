@@ -20,6 +20,10 @@ from target_workday_sftp.stdio_util import detach_stdio_from_pipes
 
 logger = logging.getLogger(__name__)
 
+# hotgluexyz/target-sftp: silence paramiko's own loggers so teardown (transport/channel)
+# does not spam stderr—helps piped runners that close the log pipe early (SIGPIPE / 141).
+logging.getLogger("paramiko").setLevel(logging.CRITICAL)
+
 
 @dataclass(frozen=True)
 class SftpConnectionConfig:

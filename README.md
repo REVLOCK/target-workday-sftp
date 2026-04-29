@@ -41,6 +41,12 @@ Batch-style target (same pattern as [target-intacct](https://github.com/hotgluex
    target-workday-sftp --config config.json
    ```
 
+## Hotglue
+
+This target is **classic Singer** (`singer-python`: config file, batch transform, SFTP). It is **not** a **Singer SDK** (`singer-sdk` / Meltano SDK) target.
+
+In your Hotglue **connector / target definition**, set **`singer_sdk` to `false`** (or turn off the equivalent “Singer SDK” toggle). If it is left `true`, the executor may treat stdio and lifecycle like an SDK target and you can see spurious failures (e.g. exit code **141**) even when the same package runs fine locally.
+
 ## Layout
 
 - `setup.py` / `setup.cfg` — package metadata and entry point.

@@ -2,13 +2,6 @@
 
 from __future__ import annotations
 
-import signal
-
-# Before any other imports: piped runners often close stdout early; logging/crypto
-# during import or shutdown can otherwise terminate the process with SIGPIPE (141).
-if hasattr(signal, "SIGPIPE"):
-    signal.signal(signal.SIGPIPE, signal.SIG_IGN)
-
 import json
 import os
 from pathlib import Path
@@ -20,26 +13,14 @@ from target_workday_sftp.const import (
     REQUIRED_CONFIG_KEYS,
     REQUIRED_FLATTENED_CONFIG_KEYS,
 )
-from target_workday_sftp.diagnostic import (
-    close_diagnostic,
-    diag,
-    diagnostic_active,
-    init_diagnostic,
-)
 from target_workday_sftp.exceptions import SftpUploadError
 from target_workday_sftp.sftp_upload import (
     SftpConnectionConfig,
     upload_file,
 )
-from target_workday_sftp.stdio_util import detach_stdio_from_pipes
 from target_workday_sftp.transform import transform_journal_summary
 
 logger = singer.get_logger()
-
-
-def _diagnostic_trace_enabled(config: Mapping[str, Any]) -> bool:
-    raw = config.get("diagnostic_trace")
-    return raw in (True, 1, "1", "true", "True", "yes", "Yes")
 
 
 def _parse_config_fields_payload(raw: Any) -> Dict[str, Any]:
@@ -94,7 +75,7 @@ def normalize_target_config(config: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _cleanup_transform_output(out_path: Path) -> None:
-    """Delete local output CSV (no logging: stderr may already be closed by the parent)."""
+    """Delete local output CSV."""
     try:
         if out_path.is_file():
             out_path.unlink()
@@ -121,37 +102,19 @@ def require_flattened_config(config: Dict[str, Any]) -> None:
 @singer.utils.handle_top_exception(logger)
 def main() -> None:
     """CLI entry: transform then SFTP."""
+    args = singer.utils.parse_args(REQUIRED_CONFIG_KEYS)
+    config = flatten_config(args.config)
+    require_flattened_config(config)
+    logger.info("Starting journal transform and SFTP upload.")
+    out_path = transform_journal_summary(config)
+
     try:
-        args = singer.utils.parse_args(REQUIRED_CONFIG_KEYS)
-        config = flatten_config(args.config)
-        require_flattened_config(config)
-        dlog = str(config.get("diagnostic_log_path") or "").strip()
-        if dlog:
-            init_diagnostic(dlog)
-        diag("main", {"event": "start"})
-        logger.info("Starting journal transform and SFTP upload.")
-        out_path = transform_journal_summary(config)
-        if not diagnostic_active() and _diagnostic_trace_enabled(config):
-            init_diagnostic(str(out_path.parent / "target_workday_sftp_diag.log"))
-        diag("main", {"event": "transform_done", "out_path": str(out_path)})
-
-        try:
-            sftp_cfg = SftpConnectionConfig.from_target_config(config)
-            diag("main", {"event": "upload_start"})
-            upload_file(out_path, sftp_cfg)
-            diag("main", {"event": "upload_returned"})
-            # upload_file() already detaches stdio before ssh.close / final SFTP logs.
-            detach_stdio_from_pipes()
-            logger.info("Finished successfully; remote received file: %s", out_path.name)
-        finally:
-            diag("main", {"event": "cleanup_output"})
-            _cleanup_transform_output(out_path)
+        sftp_cfg = SftpConnectionConfig.from_target_config(config)
+        upload_file(out_path, sftp_cfg)
+        logger.info("Finished successfully; remote received file: %s", out_path.name)
     finally:
-        diag("main", {"event": "process_end"})
-        close_diagnostic()
+        _cleanup_transform_output(out_path)
 
-    if hasattr(signal, "SIGPIPE"):
-        signal.signal(signal.SIGPIPE, signal.SIG_IGN)
     os._exit(0)
 
 

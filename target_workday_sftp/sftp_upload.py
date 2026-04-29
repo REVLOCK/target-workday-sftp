@@ -15,6 +15,7 @@ from target_workday_sftp.const import (
     SFTP_BANNER_TIMEOUT,
     SFTP_CONNECT_TIMEOUT,
 )
+from target_workday_sftp.diagnostic import diag
 from target_workday_sftp.exceptions import SftpUploadError
 from target_workday_sftp.stdio_util import detach_stdio_from_pipes
 
@@ -118,7 +119,9 @@ def upload_file(local_path: Path, config: SftpConnectionConfig) -> None:
     )
     # Piped runners (Hotglue) may stop reading stderr after this line; Paramiko/cryptography
     # still write during ssh.connect/teardown → SIGPIPE (141). Detach before any SSH I/O.
+    diag("sftp", {"event": "before_stdio_detach", "remote_path": remote_path})
     detach_stdio_from_pipes()
+    diag("sftp", {"event": "after_stdio_detach"})
 
     connect_kwargs: Dict[str, Any] = {
         "hostname": config.host,
@@ -141,26 +144,40 @@ def upload_file(local_path: Path, config: SftpConnectionConfig) -> None:
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
         try:
+            diag("sftp", {"event": "before_ssh_connect", "host": config.host, "port": config.port})
             ssh.connect(**connect_kwargs)
+            diag("sftp", {"event": "after_ssh_connect"})
         except SSHException as exc:
+            diag("sftp", {"event": "ssh_connect_failed", "error": str(exc)})
             raise SftpUploadError(f"SSH handshake or transport failed: {exc}") from exc
         except OSError as exc:
+            diag("sftp", {"event": "ssh_connect_oserror", "error": str(exc)})
             raise SftpUploadError(f"Network error connecting to {config.host!r}: {exc}") from exc
 
         try:
+            diag("sftp", {"event": "before_open_sftp"})
             sftp = ssh.open_sftp()
+            diag("sftp", {"event": "after_open_sftp"})
         except SSHException as exc:
+            diag("sftp", {"event": "open_sftp_failed", "error": str(exc)})
             raise SftpUploadError(f"Failed to open SFTP subsystem: {exc}") from exc
 
         try:
+            diag("sftp", {"event": "before_put", "local": str(local_path), "remote": remote_path})
             sftp.put(str(local_path), remote_path)
+            diag("sftp", {"event": "after_put"})
         except (OSError, SSHException) as exc:
+            diag("sftp", {"event": "put_failed", "error": str(exc)})
             raise SftpUploadError(
                 f"Failed to put file to {remote_path!r}: {exc}"
             ) from exc
         finally:
+            diag("sftp", {"event": "before_sftp_close"})
             sftp.close()
+            diag("sftp", {"event": "after_sftp_close"})
 
         logger.info("Remote file upload complete path=%s", remote_path)
     finally:
+        diag("sftp", {"event": "before_ssh_close"})
         ssh.close()
+        diag("sftp", {"event": "after_ssh_close"})

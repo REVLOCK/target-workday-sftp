@@ -90,6 +90,29 @@ def _cleanup_transform_output(out_path: Path) -> None:
         pass
 
 
+def _detach_stdio_from_pipes() -> None:
+    """Re-open stdin/stdout/stderr on ``/dev/null`` so nothing writes to closed pipe fds.
+
+    Hotglue (and similar runners) may close the read end of the child's stderr/stdout pipe
+    right after the last log line. Paramiko or logging can still emit on those fds from C
+    or another layer where ``SIGPIPE`` is not ignored → exit 141. After this, stray writes
+    go nowhere harmful.
+    """
+    try:
+        dn = os.open(os.devnull, os.O_RDWR)
+    except OSError:
+        return
+    try:
+        for fd in (0, 1, 2):
+            try:
+                os.dup2(dn, fd)
+            except OSError:
+                pass
+    finally:
+        if dn > 2:
+            os.close(dn)
+
+
 def require_flattened_config(config: Dict[str, Any]) -> None:
     """Require non-empty flattened keys."""
     missing: list[str] = []
@@ -132,6 +155,7 @@ def main() -> None:
     # further stderr write (logging shutdown, cleanup logs) can SIGPIPE the process (141).
     if hasattr(signal, "SIGPIPE"):
         signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+    _detach_stdio_from_pipes()
     os._exit(0)
 
 

@@ -116,6 +116,9 @@ def upload_file(local_path: Path, config: SftpConnectionConfig) -> None:
         auth_mode,
         local_path.stat().st_size if local_path.is_file() else 0,
     )
+    # Piped runners (Hotglue) may stop reading stderr after this line; Paramiko/cryptography
+    # still write during ssh.connect/teardown → SIGPIPE (141). Detach before any SSH I/O.
+    detach_stdio_from_pipes()
 
     connect_kwargs: Dict[str, Any] = {
         "hostname": config.host,
@@ -158,9 +161,6 @@ def upload_file(local_path: Path, config: SftpConnectionConfig) -> None:
         finally:
             sftp.close()
 
-        # ``ssh.close()`` can log on stderr; hotglue may already have closed the pipe after
-        # the last paramiko line. Detach stdio before our success log and before ssh.close.
-        detach_stdio_from_pipes()
         logger.info("Remote file upload complete path=%s", remote_path)
     finally:
         ssh.close()

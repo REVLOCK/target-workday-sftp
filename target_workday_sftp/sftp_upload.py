@@ -16,6 +16,7 @@ from target_workday_sftp.const import (
     SFTP_CONNECT_TIMEOUT,
 )
 from target_workday_sftp.exceptions import SftpUploadError
+from target_workday_sftp.stdio_util import detach_stdio_from_pipes
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,9 @@ def upload_file(local_path: Path, config: SftpConnectionConfig) -> None:
         finally:
             sftp.close()
 
+        # ``ssh.close()`` can log on stderr; hotglue may already have closed the pipe after
+        # the last paramiko line. Detach stdio before our success log and before ssh.close.
+        detach_stdio_from_pipes()
         logger.info("Remote file upload complete path=%s", remote_path)
     finally:
         ssh.close()

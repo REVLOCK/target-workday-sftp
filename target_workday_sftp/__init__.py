@@ -25,6 +25,7 @@ from target_workday_sftp.sftp_upload import (
     SftpConnectionConfig,
     upload_file,
 )
+from target_workday_sftp.stdio_util import detach_stdio_from_pipes
 from target_workday_sftp.transform import transform_journal_summary
 
 logger = singer.get_logger()
@@ -90,29 +91,6 @@ def _cleanup_transform_output(out_path: Path) -> None:
         pass
 
 
-def _detach_stdio_from_pipes() -> None:
-    """Re-open stdin/stdout/stderr on ``/dev/null`` so nothing writes to closed pipe fds.
-
-    Hotglue (and similar runners) may close the read end of the child's stderr/stdout pipe
-    right after the last log line. Paramiko or logging can still emit on those fds from C
-    or another layer where ``SIGPIPE`` is not ignored → exit 141. After this, stray writes
-    go nowhere harmful.
-    """
-    try:
-        dn = os.open(os.devnull, os.O_RDWR)
-    except OSError:
-        return
-    try:
-        for fd in (0, 1, 2):
-            try:
-                os.dup2(dn, fd)
-            except OSError:
-                pass
-    finally:
-        if dn > 2:
-            os.close(dn)
-
-
 def require_flattened_config(config: Dict[str, Any]) -> None:
     """Require non-empty flattened keys."""
     missing: list[str] = []
@@ -141,10 +119,8 @@ def main() -> None:
     try:
         sftp_cfg = SftpConnectionConfig.from_target_config(config)
         upload_file(out_path, sftp_cfg)
-        # Hotglue often closes the stderr pipe right after the last line from paramiko.
-        # If we log again on that pipe first, the process dies with SIGPIPE (141). Detach
-        # stdio from the pipe *before* any further logging or interpreter teardown.
-        _detach_stdio_from_pipes()
+        # upload_file() already detaches stdio before ssh.close / final SFTP logs.
+        detach_stdio_from_pipes()
         logger.info("Finished successfully; remote received file: %s", out_path.name)
     finally:
         _cleanup_transform_output(out_path)

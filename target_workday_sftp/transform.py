@@ -108,14 +108,14 @@ def _blank_str(val: Any) -> str:
 
 def _line_memo(row: Mapping[str, Any], config: Mapping[str, Any]) -> str:
     jememo = _str_from_config(config, "JournalEntryMemo")
-    ptype = _blank_str(row.get("Product Type", ""))
+    ptype = _blank_str(row.get("ProductType", ""))
     pcode = _blank_str(row.get("Product Code", ""))
     return f"{jememo} {ptype} {pcode}"
 
 
 def _revenue_category(row: Mapping[str, Any]) -> str:
     code = _blank_str(row.get("Product Code", ""))
-    ptype = _blank_str(row.get("Product Type", ""))
+    ptype = _blank_str(row.get("ProductType", ""))
     if code and ptype:
         return f"{code} - {ptype}"
     return code or ptype
@@ -172,7 +172,7 @@ def transform_row(
     ledger_id = _blank_str(row.get("Account Number", ""))
     cur = _blank_str(row.get("Currency", ""))
     rev = _revenue_category(row)
-    sales_item = _blank_str(row.get("Product Type", ""))
+    sales_item = _blank_str(row.get("ProductType", ""))
     line_memo = _line_memo(row, config)
 
     # Every ``_str_from_config`` column in ``WORKDAY_OUTPUT_COLUMNS`` order (JournalKey … tail externals).

@@ -13,7 +13,7 @@ REQUIRED_INPUT_COLUMNS = [
     "Amount",
     "Posting Type",
     "Currency",
-    "Product Type",
+    "ProductType",
     "Product Code",
     "MarketID Finance",
     "Customer Name",

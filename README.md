@@ -22,7 +22,7 @@ Batch-style target (same pattern as [target-intacct](https://github.com/hotgluex
 
    | Key | Purpose |
    |-----|---------|
-   | `input_path` | Directory containing `JournalEntries.csv`. The CSV must use the exact column names in `REQUIRED_INPUT_COLUMNS` in `const.py` (default journal export: `Transaction Date`, `Journal Entry Id`, `Account Number`, `Account Name`, `Amount`, `Posting Type`, `Currency`, `Product Type`, `Product Code`, `MarketID Finance`, `Customer Name`, `Description`). Required after flatten (top level or via `config_fields`). |
+   | `input_path` | Directory containing `JournalEntries.csv`. The CSV must use the exact column names in `REQUIRED_INPUT_COLUMNS` in `const.py` (default journal export: `Transaction Date`, `Journal Entry Id`, `Account Number`, `Account Name`, `Amount`, `Posting Type`, `Currency`, `ProductType`, `Product Code`, `MarketID Finance`, `Customer Name`, `Description`). Required after flatten (top level or via `config_fields`). |
    | `sftp_host` | SFTP server hostname. |
    | `sftp_username` | SFTP login. |
    | `sftp_remote_path` | Remote **file path**, or a **directory** ending with `/` (basename of the transformed file is appended). |

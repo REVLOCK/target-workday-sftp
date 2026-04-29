@@ -22,7 +22,7 @@ from target_workday_sftp.transform import transform_journal_summary
 
 _JOURNAL_CSV_HEADER = (
     "Transaction Date,Journal Entry Id,Account Number,Account Name,Amount,"
-    "Posting Type,Currency,Product Type,Product Code,MarketID Finance,Customer Name,Description\n"
+    "Posting Type,Currency,ProductType,Product Code,MarketID Finance,Customer Name,Description\n"
 )
 
 _WORKDAY_JOURNAL_FLAGS = {
@@ -48,7 +48,7 @@ def test_required_config_keys_defined() -> None:
     assert "input_path" in REQUIRED_FLATTENED_CONFIG_KEYS
     assert "sftp_host" in REQUIRED_FLATTENED_CONFIG_KEYS
     assert REQUIRED_INPUT_COLUMNS[0] == "Transaction Date"
-    assert "Product Type" in REQUIRED_INPUT_COLUMNS
+    assert "ProductType" in REQUIRED_INPUT_COLUMNS
 
 
 def test_transform_default_output_filename_yyyymmdd_utc(tmp_path) -> None:

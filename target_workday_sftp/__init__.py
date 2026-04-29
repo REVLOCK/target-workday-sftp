@@ -141,21 +141,16 @@ def main() -> None:
     try:
         sftp_cfg = SftpConnectionConfig.from_target_config(config)
         upload_file(out_path, sftp_cfg)
-        try:
-            logger.info(
-                "Finished successfully; remote received file: %s", out_path.name
-            )
-        except Exception:
-            # Piped parents may close stderr as soon as upload completes; still exit 0.
-            pass
+        # Hotglue often closes the stderr pipe right after the last line from paramiko.
+        # If we log again on that pipe first, the process dies with SIGPIPE (141). Detach
+        # stdio from the pipe *before* any further logging or interpreter teardown.
+        _detach_stdio_from_pipes()
+        logger.info("Finished successfully; remote received file: %s", out_path.name)
     finally:
         _cleanup_transform_output(out_path)
 
-    # Piped runners often close the read side as soon as they see the last log line; any
-    # further stderr write (logging shutdown, cleanup logs) can SIGPIPE the process (141).
     if hasattr(signal, "SIGPIPE"):
         signal.signal(signal.SIGPIPE, signal.SIG_IGN)
-    _detach_stdio_from_pipes()
     os._exit(0)
 
 

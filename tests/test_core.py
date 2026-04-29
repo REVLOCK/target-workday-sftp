@@ -183,7 +183,7 @@ def test_transform_chargebee_transaction_date_shape(tmp_path) -> None:
     assert rows[0]["LedgerAccountReferenceID"] == "2600"
     assert rows[0]["CreditAmount"] == "160.0"
     assert rows[0]["DebitAmount"] == ""
-    assert rows[0]["LineMemo"] == "Chargebee RevRec SUBSCRIPTION 2"
+    assert rows[0]["LineMemo"] == "Chargebee RevRec | SUBSCRIPTION"
 
 
 def test_transform_workday_journal_auto(tmp_path) -> None:

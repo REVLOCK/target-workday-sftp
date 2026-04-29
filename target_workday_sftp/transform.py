@@ -109,8 +109,7 @@ def _blank_str(val: Any) -> str:
 def _line_memo(row: Mapping[str, Any], config: Mapping[str, Any]) -> str:
     jememo = _str_from_config(config, "JournalEntryMemo")
     ptype = _blank_str(row.get("ProductType", ""))
-    pcode = _blank_str(row.get("Product Code", ""))
-    return f"{jememo} {ptype} {pcode}"
+    return f"{jememo} | {ptype}"
 
 
 def _revenue_category(row: Mapping[str, Any]) -> str:

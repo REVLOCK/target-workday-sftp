@@ -168,7 +168,9 @@ def transform_row(
     debit = amount_str if et_raw == "debit" else ""
     credit = amount_str if et_raw == "credit" else ""
 
-    line_company = _blank_str(row.get("MarketID Finance", ""))
+    line_company = _blank_str(row.get("MarketID Finance", "")) or _str_from_config(
+        config, "LineCompanyReferenceID"
+    )
     ledger_id = _blank_str(row.get("Account Number", ""))
     cur = _blank_str(row.get("Currency", ""))
     rev = _revenue_category(row)

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import signal
+import sys
 from pathlib import Path
 from typing import Any, Dict
 
@@ -102,6 +104,11 @@ def require_flattened_config(config: Dict[str, Any]) -> None:
 @singer.utils.handle_top_exception(logger)
 def main() -> None:
     """CLI entry: transform then SFTP."""
+    # Avoid exit 141 (SIGPIPE) when the parent closes stdout/stderr while we still log
+    # (common under piped / hotglue-style subprocess runners).
+    if hasattr(signal, "SIGPIPE"):
+        signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+
     args = singer.utils.parse_args(REQUIRED_CONFIG_KEYS)
     config = flatten_config(args.config)
     require_flattened_config(config)
@@ -114,6 +121,8 @@ def main() -> None:
         logger.info("Finished successfully; remote received file: %s", out_path.name)
     finally:
         _cleanup_transform_output(out_path)
+
+    sys.exit(0)
 
 
 __all__ = [

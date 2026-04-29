@@ -138,7 +138,7 @@ def test_normalize_target_config_is_flatten_alias() -> None:
 
 
 def test_blank_row_cells_output_empty_row_fields(tmp_path) -> None:
-    """Row-only fields stay blank when the journal cell is blank (no config overlay)."""
+    """Currency stays row-only; LineCompanyReferenceID falls back to config when MarketID Finance is blank."""
     jroot = _write_input_workspace(
         tmp_path,
         "fb",
@@ -159,7 +159,7 @@ def test_blank_row_cells_output_empty_row_fields(tmp_path) -> None:
         rows = list(csv.DictReader(handle))
     assert rows[0]["Currency"] == ""
     assert rows[0]["LineCurrency"] == ""
-    assert rows[0]["LineCompanyReferenceID"] == ""
+    assert rows[0]["LineCompanyReferenceID"] == "BUFF"
 
 
 def test_transform_chargebee_transaction_date_shape(tmp_path) -> None:

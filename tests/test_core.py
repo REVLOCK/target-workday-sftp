@@ -230,8 +230,33 @@ def test_transform_workday_empty_input(tmp_path) -> None:
         transform_journal_summary(config)
 
 
+def test_transform_accounting_date_normalized_to_yyyy_mm_dd(tmp_path) -> None:
+    """AccountingDate is YYYY-MM-DD (slash dates, ISO datetime date part)."""
+    jroot = _write_input_workspace(
+        tmp_path,
+        "dates",
+        _JOURNAL_CSV_HEADER
+        + "2026/04/04,je1,10000,AR,1,Credit,USD,,,,,a\n"
+        + "04/05/2026,je2,10000,AR,1,Debit,USD,,,,,b\n"
+        + "2026-06-07T14:30:00,je3,10000,AR,1,Credit,USD,,,,,c\n",
+    )
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    config = {
+        "input_path": str(jroot),
+        "transform_output_dir": str(out_dir),
+        **_WORKDAY_JOURNAL_FLAGS,
+    }
+    out_path = transform_journal_summary(config)
+    with out_path.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows[0]["AccountingDate"] == "2026-04-04"
+    assert rows[1]["AccountingDate"] == "2026-04-05"
+    assert rows[2]["AccountingDate"] == "2026-06-07"
+
+
 def test_transform_passes_empty_transaction_date_to_accounting_date(tmp_path) -> None:
-    """AccountingDate mirrors Transaction Date; blank input → blank output."""
+    """AccountingDate blank when Transaction Date is blank."""
     jroot = _write_input_workspace(
         tmp_path,
         "no_tx",

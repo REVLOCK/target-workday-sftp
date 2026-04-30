@@ -106,6 +106,30 @@ def _blank_str(val: Any) -> str:
     return s
 
 
+def _format_accounting_date(val: Any) -> str:
+    """Normalize ``Transaction Date`` to ``YYYY-MM-DD`` for Workday ``AccountingDate``."""
+    raw = _blank_str(val)
+    if not raw:
+        return ""
+    s = raw.strip()
+    if "T" in s:
+        s = s.split("T", 1)[0]
+    elif len(s) > 10 and s[4] == "-" and s[7] == "-" and s[10] == " ":
+        s = s.split(" ", 1)[0]
+    fmts = ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%d/%m/%Y", "%m-%d-%Y", "%d-%m-%Y")
+    for fmt in fmts:
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        try:
+            return datetime.strptime(s[:10], "%Y-%m-%d").strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return raw
+
+
 def _line_memo(row: Mapping[str, Any], config: Mapping[str, Any]) -> str:
     jememo = _str_from_config(config, "JournalEntryMemo")
     ptype = _blank_str(row.get("ProductType", ""))
@@ -183,7 +207,7 @@ def transform_row(
         out[col] = _str_from_config(config, col)
 
     out["Currency"] = cur
-    out["AccountingDate"] = _blank_str(row.get("Transaction Date", ""))
+    out["AccountingDate"] = _format_accounting_date(row.get("Transaction Date", ""))
     out["JournalLineOrder"] = str(line_order)
     out["LineCompanyReferenceID"] = line_company
     out["LedgerAccountReferenceID"] = ledger_id

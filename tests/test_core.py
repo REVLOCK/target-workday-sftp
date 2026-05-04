@@ -137,6 +137,28 @@ def test_normalize_target_config_is_flatten_alias() -> None:
     assert normalize_target_config(raw) == flatten_config(raw)
 
 
+def test_market_id_finance_suffix_400_on_line_company_reference_id(tmp_path) -> None:
+    """Non-blank MarketID Finance becomes value + _400 for LineCompanyReferenceID."""
+    jroot = _write_input_workspace(
+        tmp_path,
+        "mid",
+        _JOURNAL_CSV_HEADER
+        + "2025-09-01,je,10000,AR,200,Credit,USD,,,ACME,,memo\n",
+    )
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    config = {
+        "input_path": str(jroot),
+        "transform_output_dir": str(out_dir),
+        "LineCompanyReferenceID": "IGNORED_WHEN_MARKET_SET",
+        **_WORKDAY_JOURNAL_FLAGS,
+    }
+    out_path = transform_journal_summary(config)
+    with out_path.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows[0]["LineCompanyReferenceID"] == "ACME_400"
+
+
 def test_blank_row_cells_output_empty_row_fields(tmp_path) -> None:
     """Currency stays row-only; LineCompanyReferenceID falls back to config when MarketID Finance is blank."""
     jroot = _write_input_workspace(

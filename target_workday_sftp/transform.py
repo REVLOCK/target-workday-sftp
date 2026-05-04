@@ -136,6 +136,14 @@ def _line_memo(row: Mapping[str, Any], config: Mapping[str, Any]) -> str:
     return f"{jememo} | {ptype}"
 
 
+def _line_company_reference_id(row: Mapping[str, Any], config: Mapping[str, Any]) -> str:
+    """``LineCompanyReferenceID``: ``MarketID Finance`` + ``_400`` when present, else config."""
+    market = _blank_str(row.get("MarketID Finance", ""))
+    if market:
+        return f"{market}_400"
+    return _str_from_config(config, "LineCompanyReferenceID")
+
+
 def _revenue_category(row: Mapping[str, Any]) -> str:
     code = _blank_str(row.get("Product Code", ""))
     ptype = _blank_str(row.get("ProductType", ""))
@@ -165,6 +173,7 @@ _TRANSFORM_ROW_SKIP_STR_FROM_CONFIG = frozenset(
         "LedgerCreditAmount",
         "Worktag_Revenue_Category_ID",
         "Worktag_Sales_Item_ID",
+        "Worktag_Cost_Center_Reference_ID"
     }
 )
 
@@ -191,13 +200,9 @@ def transform_row(
     debit = amount_str if et_raw == "debit" else ""
     credit = amount_str if et_raw == "credit" else ""
 
-    line_company = _blank_str(row.get("MarketID Finance", "")) or _str_from_config(
-        config, "LineCompanyReferenceID"
-    )
+    line_company = _line_company_reference_id(row, config)
     ledger_id = _blank_str(row.get("Account Number", ""))
     cur = _blank_str(row.get("Currency", ""))
-    rev = _revenue_category(row)
-    sales_item = _blank_str(row.get("ProductType", ""))
     line_memo = _line_memo(row, config)
 
     # Every ``_str_from_config`` column in ``WORKDAY_OUTPUT_COLUMNS`` order (JournalKey … tail externals).
@@ -217,8 +222,9 @@ def transform_row(
     out["LineCurrency"] = cur
     out["LedgerDebitAmount"] = debit
     out["LedgerCreditAmount"] = credit
-    out["Worktag_Revenue_Category_ID"] = rev
-    out["Worktag_Sales_Item_ID"] = sales_item
+    out["Worktag_Revenue_Category_ID"] = _blank_str(row.get("Worktag Revenue Category ID", ""))
+    out["Worktag_Sales_Item_ID"] = _blank_str(row.get("Worktag Sales Item ID", ""))
+    out["Worktag_Cost_Center_Reference_ID"] = line_company
 
     return out
 

@@ -214,7 +214,7 @@ def transform_row(
     out["Currency"] = cur
     out["AccountingDate"] = _format_accounting_date(row.get("Transaction Date", ""))
     out["JournalLineOrder"] = str(line_order)
-    out["LineCompanyReferenceID"] = line_company
+    out["LineCompanyReferenceID"] = _blank_str(row.get("MarketID Finance", ""))
     out["LedgerAccountReferenceID"] = ledger_id
     out["LineMemo"] = line_memo
     out["DebitAmount"] = debit

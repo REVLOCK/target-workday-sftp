@@ -136,8 +136,8 @@ def _line_memo(row: Mapping[str, Any], config: Mapping[str, Any]) -> str:
     return f"{jememo} | {ptype}"
 
 
-def _line_company_reference_id(row: Mapping[str, Any], config: Mapping[str, Any]) -> str:
-    """``LineCompanyReferenceID``: ``MarketID Finance`` + ``_400`` when present, else config."""
+def _worktag_cost_center_reference_id(row: Mapping[str, Any], config: Mapping[str, Any]) -> str:
+    """``Worktag_Cost_Center_Reference_ID``: ``MarketID Finance`` + ``_400`` when present, else ``LineCompanyReferenceID`` from config."""
     market = _blank_str(row.get("MarketID Finance", ""))
     if market:
         return f"{market}_400"
@@ -200,7 +200,7 @@ def transform_row(
     debit = amount_str if et_raw == "debit" else ""
     credit = amount_str if et_raw == "credit" else ""
 
-    line_company = _line_company_reference_id(row, config)
+    worktag_cost_center_reference_id = _worktag_cost_center_reference_id(row, config)
     ledger_id = _blank_str(row.get("Account Number", ""))
     cur = _blank_str(row.get("Currency", ""))
     line_memo = _line_memo(row, config)
@@ -224,7 +224,7 @@ def transform_row(
     out["LedgerCreditAmount"] = credit
     out["Worktag_Revenue_Category_ID"] = _blank_str(row.get("Worktag Revenue Category ID", ""))
     out["Worktag_Sales_Item_ID"] = _blank_str(row.get("Worktag Sales Item ID", ""))
-    out["Worktag_Cost_Center_Reference_ID"] = line_company
+    out["Worktag_Cost_Center_Reference_ID"] = worktag_cost_center_reference_id
 
     return out
 

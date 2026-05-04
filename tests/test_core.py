@@ -137,8 +137,8 @@ def test_normalize_target_config_is_flatten_alias() -> None:
     assert normalize_target_config(raw) == flatten_config(raw)
 
 
-def test_market_id_finance_suffix_400_on_line_company_reference_id(tmp_path) -> None:
-    """Non-blank MarketID Finance becomes value + _400 for LineCompanyReferenceID."""
+def test_market_id_finance_line_company_raw_and_cost_center_suffix_400(tmp_path) -> None:
+    """LineCompanyReferenceID is raw MarketID Finance; Worktag_Cost_Center_Reference_ID gets _400 suffix."""
     jroot = _write_input_workspace(
         tmp_path,
         "mid",
@@ -156,11 +156,12 @@ def test_market_id_finance_suffix_400_on_line_company_reference_id(tmp_path) -> 
     out_path = transform_journal_summary(config)
     with out_path.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
-    assert rows[0]["LineCompanyReferenceID"] == "ACME_400"
+    assert rows[0]["LineCompanyReferenceID"] == "ACME"
+    assert rows[0]["Worktag_Cost_Center_Reference_ID"] == "ACME_400"
 
 
 def test_blank_row_cells_output_empty_row_fields(tmp_path) -> None:
-    """Currency stays row-only; LineCompanyReferenceID falls back to config when MarketID Finance is blank."""
+    """Currency stays row-only; blank MarketID → empty LineCompanyReferenceID; cost center uses config LineCompanyReferenceID."""
     jroot = _write_input_workspace(
         tmp_path,
         "fb",
@@ -181,7 +182,8 @@ def test_blank_row_cells_output_empty_row_fields(tmp_path) -> None:
         rows = list(csv.DictReader(handle))
     assert rows[0]["Currency"] == ""
     assert rows[0]["LineCurrency"] == ""
-    assert rows[0]["LineCompanyReferenceID"] == "BUFF"
+    assert rows[0]["LineCompanyReferenceID"] == ""
+    assert rows[0]["Worktag_Cost_Center_Reference_ID"] == "BUFF"
 
 
 def test_transform_chargebee_transaction_date_shape(tmp_path) -> None:

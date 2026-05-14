@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import csv
 import json
-import re
-from datetime import datetime, timezone
 
 import pytest
 
@@ -16,6 +14,7 @@ from target_workday_sftp.const import (
     REQUIRED_FLATTENED_CONFIG_KEYS,
     REQUIRED_INPUT_COLUMNS,
     TRANSFORM_OUTPUT_DIR_DEFAULT,
+    TRANSFORM_OUTPUT_FILENAME,
 )
 from target_workday_sftp.exceptions import InputError, TransformError
 from target_workday_sftp.transform import transform_journal_summary
@@ -51,8 +50,8 @@ def test_required_config_keys_defined() -> None:
     assert "ProductType" in REQUIRED_INPUT_COLUMNS
 
 
-def test_transform_default_output_filename_yyyymmdd_utc(tmp_path) -> None:
-    """Default output filename is UTC YYYYMMDD.csv."""
+def test_transform_default_output_filename(tmp_path) -> None:
+    """Default output filename is chargebee_journal_posting.csv."""
     jroot = _write_input_workspace(
         tmp_path,
         "revrec_in",
@@ -66,9 +65,7 @@ def test_transform_default_output_filename_yyyymmdd_utc(tmp_path) -> None:
         **_WORKDAY_JOURNAL_FLAGS,
     }
     out_path = transform_journal_summary(config)
-    expected = datetime.now(timezone.utc).strftime("%Y%m%d") + ".csv"
-    assert out_path.name == expected
-    assert re.fullmatch(r"\d{8}\.csv", out_path.name)
+    assert out_path.name == TRANSFORM_OUTPUT_FILENAME
 
 
 def test_transform_default_output_dir_relative_to_cwd(tmp_path, monkeypatch) -> None:
@@ -83,8 +80,7 @@ def test_transform_default_output_dir_relative_to_cwd(tmp_path, monkeypatch) -> 
         **_WORKDAY_JOURNAL_FLAGS,
     }
     out_path = transform_journal_summary(config)
-    expected_name = datetime.now(timezone.utc).strftime("%Y%m%d") + ".csv"
-    assert out_path == tmp_path / TRANSFORM_OUTPUT_DIR_DEFAULT / expected_name
+    assert out_path == tmp_path / TRANSFORM_OUTPUT_DIR_DEFAULT / TRANSFORM_OUTPUT_FILENAME
     assert out_path.is_file()
 
 
@@ -233,6 +229,41 @@ def test_spend_category_no_account_match_uses_config_worktag_spend(tmp_path) -> 
     with out_path.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
     assert rows[0]["Worktag_Spend_Category_ID"] == "FROM_CONFIG"
+
+
+def test_spend_category_skipped_for_accounts_1170_and_1180(tmp_path) -> None:
+    """Accounts 1170/1180 skip spend map and revenue/sales worktag logic; spend stays from config."""
+    spend_map = json.dumps({"1170": "FROM_MAP", "1180": "FROM_MAP_1180", "5510": "Other"})
+    header = (
+        "Transaction Date,Journal Entry Id,Account Number,Account Name,Amount,"
+        "Posting Type,Currency,ProductType,Product Code,MarketID Finance,Customer Name,Description,"
+        "Worktag Revenue Category ID,Worktag Sales Item ID\n"
+    )
+    body = (
+        "2025-09-01,je1,1170,AR,50,Credit,USD,,,,,m,REV_SHOULD_SKIP,SALES_SKIP\n"
+        "2025-09-01,je2,1180,AR,50,Credit,USD,,,,,m,REV2_SKIP,SALES2_SKIP\n"
+    )
+    jroot = _write_input_workspace(tmp_path, "spend_skip_117x", header + body)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    config = {
+        "input_path": str(jroot),
+        "transform_output_dir": str(out_dir),
+        "spend_category": spend_map,
+        "Worktag_Spend_Category_ID": "CONFIG_SPEND",
+        **_WORKDAY_JOURNAL_FLAGS,
+    }
+    out_path = transform_journal_summary(config)
+    with out_path.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows[0]["LedgerAccountReferenceID"] == "1170"
+    assert rows[0]["Worktag_Spend_Category_ID"] == "CONFIG_SPEND"
+    assert rows[0]["Worktag_Revenue_Category_ID"] == ""
+    assert rows[0]["Worktag_Sales_Item_ID"] == ""
+    assert rows[1]["LedgerAccountReferenceID"] == "1180"
+    assert rows[1]["Worktag_Spend_Category_ID"] == "CONFIG_SPEND"
+    assert rows[1]["Worktag_Revenue_Category_ID"] == ""
+    assert rows[1]["Worktag_Sales_Item_ID"] == ""
 
 
 def test_transform_chargebee_transaction_date_shape(tmp_path) -> None:

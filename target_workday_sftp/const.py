@@ -1,7 +1,7 @@
 """Constants for config keys, paths, timeouts, output columns."""
 
 TRANSFORM_OUTPUT_DIR_DEFAULT = "output"
-TRANSFORM_OUTPUT_DEFAULT_DATE_STRFTIME = "%Y%m%d"
+TRANSFORM_OUTPUT_FILENAME = "chargebee_journal_posting.csv"
 INPUT_FILENAME = "JournalEntries.csv"
 
 # Exact ``JournalEntries.csv`` header names (same contract as default journal export).

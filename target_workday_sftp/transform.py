@@ -8,15 +8,15 @@ import logging
 import math
 import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Mapping
 
 from target_workday_sftp.const import (
     INPUT_FILENAME,
     REQUIRED_INPUT_COLUMNS,
-    TRANSFORM_OUTPUT_DEFAULT_DATE_STRFTIME,
     TRANSFORM_OUTPUT_DIR_DEFAULT,
+    TRANSFORM_OUTPUT_FILENAME,
     WORKDAY_OUTPUT_COLUMNS,
 )
 from target_workday_sftp.exceptions import InputError, TransformError, ValidationError
@@ -249,22 +249,20 @@ def transform_row(
     
     out["Worktag_Cost_Center_Reference_ID"] = worktag_cost_center_reference_id
 
-    spend_from_map = _spend_category_for_account(account_number, config)
-    if spend_from_map:
-        out["Worktag_Spend_Category_ID"] = spend_from_map
-    else:
-        out["Worktag_Revenue_Category_ID"] = _blank_str(row.get("Worktag Revenue Category ID", ""))
-        out["Worktag_Sales_Item_ID"] = _blank_str(row.get("Worktag Sales Item ID", ""))
+    if account_number not in ("1170", "1180"):
+        spend_from_map = _spend_category_for_account(account_number, config)
+        if spend_from_map:
+            out["Worktag_Spend_Category_ID"] = spend_from_map
+        else:
+            out["Worktag_Revenue_Category_ID"] = _blank_str(row.get("Worktag Revenue Category ID", ""))
+            out["Worktag_Sales_Item_ID"] = _blank_str(row.get("Worktag Sales Item ID", ""))
 
     return out
 
 
 def _transform_output_csv_path(config: Mapping[str, Any]) -> Path:
-    """Destination path: ``{UTC_YYYYMMDD}.csv`` under configured or default output dir."""
-    name = (
-        datetime.now(timezone.utc).strftime(TRANSFORM_OUTPUT_DEFAULT_DATE_STRFTIME)
-        + ".csv"
-    )
+    """Destination path: ``chargebee_journal_posting.csv`` under configured or default output dir."""
+    name = TRANSFORM_OUTPUT_FILENAME
     out_dir_raw = config.get("transform_output_dir")
     if out_dir_raw not in (None, ""):
         out_dir = Path(str(out_dir_raw)).expanduser().resolve()

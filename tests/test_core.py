@@ -186,6 +186,55 @@ def test_blank_row_cells_output_empty_row_fields(tmp_path) -> None:
     assert rows[0]["Worktag_Cost_Center_Reference_ID"] == "BUFF"
 
 
+def test_spend_category_json_map_matches_account_number(tmp_path) -> None:
+    """When ``spend_category`` JSON maps Account Number, output uses that label."""
+    spend_map = json.dumps({"5510": "Bad Debts", "5435": "Delivery & Express Postage"})
+    jroot = _write_input_workspace(
+        tmp_path,
+        "spend",
+        _JOURNAL_CSV_HEADER + "2025-09-01,je,5510,AR,50,Credit,USD,,,,,m\n",
+    )
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    config = {
+        "input_path": str(jroot),
+        "transform_output_dir": str(out_dir),
+        "spend_category": spend_map,
+        "Worktag_Spend_Category_ID": "IGNORED_WHEN_MAP_MATCHES",
+        **_WORKDAY_JOURNAL_FLAGS,
+    }
+    out_path = transform_journal_summary(config)
+    with out_path.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows[0]["LedgerAccountReferenceID"] == "5510"
+    assert rows[0]["Worktag_Spend_Category_ID"] == "Bad Debts"
+    assert rows[0]["Worktag_Revenue_Category_ID"] == ""
+    assert rows[0]["Worktag_Sales_Item_ID"] == ""
+
+
+def test_spend_category_no_account_match_uses_config_worktag_spend(tmp_path) -> None:
+    """Account Number not in ``spend_category`` map → ``Worktag_Spend_Category_ID`` from config."""
+    spend_map = json.dumps({"5510": "Bad Debts"})
+    jroot = _write_input_workspace(
+        tmp_path,
+        "spend_nomatch",
+        _JOURNAL_CSV_HEADER + "2025-09-01,je,9999,AR,50,Credit,USD,,,,,m\n",
+    )
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    config = {
+        "input_path": str(jroot),
+        "transform_output_dir": str(out_dir),
+        "spend_category": spend_map,
+        "Worktag_Spend_Category_ID": "FROM_CONFIG",
+        **_WORKDAY_JOURNAL_FLAGS,
+    }
+    out_path = transform_journal_summary(config)
+    with out_path.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows[0]["Worktag_Spend_Category_ID"] == "FROM_CONFIG"
+
+
 def test_transform_chargebee_transaction_date_shape(tmp_path) -> None:
     """Fixed journal headers: period, type, amounts, line memo text."""
     jroot = _write_input_workspace(

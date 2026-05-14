@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import math
 import os
@@ -144,12 +145,35 @@ def _worktag_cost_center_reference_id(row: Mapping[str, Any], config: Mapping[st
     return _str_from_config(config, "LineCompanyReferenceID")
 
 
-def _revenue_category(row: Mapping[str, Any]) -> str:
-    code = _blank_str(row.get("Product Code", ""))
-    ptype = _blank_str(row.get("ProductType", ""))
-    if code and ptype:
-        return f"{code} - {ptype}"
-    return code or ptype
+def _spend_category_map(config: Mapping[str, Any]) -> dict[str, str]:
+    """Parse ``spend_category`` from config: JSON object or string mapping account number → label."""
+    raw = config.get("spend_category")
+    if raw is None or raw == "":
+        return {}
+    if isinstance(raw, dict):
+        return {str(k).strip(): str(v).strip() if v is not None else "" for k, v in raw.items()}
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            logger.warning("spend_category is not valid JSON: %s", exc)
+            return {}
+        if not isinstance(parsed, dict):
+            logger.warning("spend_category JSON must be an object, got %s", type(parsed).__name__)
+            return {}
+        return {str(k).strip(): str(v).strip() if v is not None else "" for k, v in parsed.items()}
+    return {}
+
+
+def _spend_category_for_account(account_number: str, config: Mapping[str, Any]) -> str:
+    """Return spend label when ``account_number`` matches a key in ``spend_category`` map."""
+    key = account_number.strip()
+    if not key:
+        return ""
+    mapping = _spend_category_map(config)
+    if key in mapping:
+        return mapping[key]
+    return ""
 
 
 def _build_empty_workday_row() -> Dict[str, str]:
@@ -173,7 +197,7 @@ _TRANSFORM_ROW_SKIP_STR_FROM_CONFIG = frozenset(
         "LedgerCreditAmount",
         "Worktag_Revenue_Category_ID",
         "Worktag_Sales_Item_ID",
-        "Worktag_Cost_Center_Reference_ID"
+        "Worktag_Cost_Center_Reference_ID",
     }
 )
 
@@ -201,7 +225,7 @@ def transform_row(
     credit = amount_str if et_raw == "credit" else ""
 
     worktag_cost_center_reference_id = _worktag_cost_center_reference_id(row, config)
-    ledger_id = _blank_str(row.get("Account Number", ""))
+    account_number = _blank_str(row.get("Account Number", ""))
     cur = _blank_str(row.get("Currency", ""))
     line_memo = _line_memo(row, config)
 
@@ -215,16 +239,22 @@ def transform_row(
     out["AccountingDate"] = _format_accounting_date(row.get("Transaction Date", ""))
     out["JournalLineOrder"] = str(line_order)
     out["LineCompanyReferenceID"] = _blank_str(row.get("MarketID Finance", ""))
-    out["LedgerAccountReferenceID"] = ledger_id
+    out["LedgerAccountReferenceID"] = account_number
     out["LineMemo"] = line_memo
     out["DebitAmount"] = debit
     out["CreditAmount"] = credit
     out["LineCurrency"] = cur
     out["LedgerDebitAmount"] = debit
     out["LedgerCreditAmount"] = credit
-    out["Worktag_Revenue_Category_ID"] = _blank_str(row.get("Worktag Revenue Category ID", ""))
-    out["Worktag_Sales_Item_ID"] = _blank_str(row.get("Worktag Sales Item ID", ""))
+    
     out["Worktag_Cost_Center_Reference_ID"] = worktag_cost_center_reference_id
+
+    spend_from_map = _spend_category_for_account(account_number, config)
+    if spend_from_map:
+        out["Worktag_Spend_Category_ID"] = spend_from_map
+    else:
+        out["Worktag_Revenue_Category_ID"] = _blank_str(row.get("Worktag Revenue Category ID", ""))
+        out["Worktag_Sales_Item_ID"] = _blank_str(row.get("Worktag Sales Item ID", ""))
 
     return out
 

@@ -133,8 +133,8 @@ def test_normalize_target_config_is_flatten_alias() -> None:
     assert normalize_target_config(raw) == flatten_config(raw)
 
 
-def test_market_id_finance_line_company_raw_and_cost_center_suffix_400(tmp_path) -> None:
-    """LineCompanyReferenceID is raw MarketID Finance; Worktag_Cost_Center_Reference_ID gets _400 suffix."""
+def test_market_id_finance_line_company_raw_and_cost_center_suffix_600(tmp_path) -> None:
+    """LineCompanyReferenceID is raw MarketID Finance; Worktag_Cost_Center_Reference_ID gets _600 suffix."""
     jroot = _write_input_workspace(
         tmp_path,
         "mid",
@@ -153,7 +153,7 @@ def test_market_id_finance_line_company_raw_and_cost_center_suffix_400(tmp_path)
     with out_path.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
     assert rows[0]["LineCompanyReferenceID"] == "ACME"
-    assert rows[0]["Worktag_Cost_Center_Reference_ID"] == "ACME_400"
+    assert rows[0]["Worktag_Cost_Center_Reference_ID"] == "ACME_600"
 
 
 def test_blank_row_cells_output_empty_row_fields(tmp_path) -> None:

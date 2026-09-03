@@ -138,10 +138,10 @@ def _line_memo(row: Mapping[str, Any], config: Mapping[str, Any]) -> str:
 
 
 def _worktag_cost_center_reference_id(row: Mapping[str, Any], config: Mapping[str, Any]) -> str:
-    """``Worktag_Cost_Center_Reference_ID``: ``MarketID Finance`` + ``_400`` when present, else ``LineCompanyReferenceID`` from config."""
+    """``Worktag_Cost_Center_Reference_ID``: ``MarketID Finance`` + ``_600`` when present, else ``LineCompanyReferenceID`` from config."""
     market = _blank_str(row.get("MarketID Finance", ""))
     if market:
-        return f"{market}_400"
+        return f"{market}_600"
     return _str_from_config(config, "LineCompanyReferenceID")
 
 

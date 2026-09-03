@@ -14,6 +14,6 @@
     "AdjustmentJournal": "1",
     "CurrencyRateType": "Current",
     "ExcludeFromSpendReport": "1",
-    "Worktag_Cost_Center_Reference_ID": "400",
+    "Worktag_Cost_Center_Reference_ID": "600",
     "transform_output_dir": ""
 }
